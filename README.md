@@ -20,6 +20,10 @@ cd netscaffold-tui
 dotnet run
 ```
 
+## ⬡ Demo
+
+![NetScaffold TUI Demo](demo/netscaffoldingtui.gif)
+
 ## ⬡ Usage
 
 1. **▸ Select Project Type**: Console, Web API, or Worker Service
