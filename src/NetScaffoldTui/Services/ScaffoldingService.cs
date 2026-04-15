@@ -36,7 +36,7 @@ public class ScaffoldingService
         GenerateGitHubWorkflow(solutionPath, config);
         
         GenerateAppsettings(srcPath, config);
-        GenerateLaunchSettings(srcPath);
+        GenerateLaunchSettings(srcPath, config);
     }
 
     private string GenerateSolutionFile(string solutionName)
@@ -123,12 +123,12 @@ public class ScaffoldingService
         
         if (layer == "Application")
         {
-            sb.AppendLine($"    <ProjectReference Include=\"..\\{config.SolutionName}.Domain\\{config.SolutionName}.Domain.csproj\" />");
+            sb.AppendLine($"    <ProjectReference Include=\"../{config.SolutionName}.Domain/{config.SolutionName}.Domain.csproj\" />");
         }
         else if (layer == "Infrastructure")
         {
-            sb.AppendLine($"    <ProjectReference Include=\"..\\{config.SolutionName}.Application\\{config.SolutionName}.Application.csproj\" />");
-            sb.AppendLine($"    <ProjectReference Include=\"..\\{config.SolutionName}.Domain\\{config.SolutionName}.Domain.csproj\" />");
+            sb.AppendLine($"    <ProjectReference Include=\"../{config.SolutionName}.Application/{config.SolutionName}.Application.csproj\" />");
+            sb.AppendLine($"    <ProjectReference Include=\"../{config.SolutionName}.Domain/{config.SolutionName}.Domain.csproj\" />");
         }
         else if (layer == "Api" || config.ProjectType == ProjectType.WebApi)
         {
@@ -359,23 +359,36 @@ Thumbs.db
 
     private void GenerateDockerfile(string path, ProjectConfig config)
     {
+        var projectSuffix = config.ProjectType switch
+        {
+            ProjectType.WebApi => "Api",
+            ProjectType.Worker => "Worker",
+            ProjectType.Console => "Console",
+            _ => "Api"
+        };
+        var projectName = $"{config.SolutionName}.{projectSuffix}";
+        var baseImage = config.ProjectType == ProjectType.WebApi
+            ? "mcr.microsoft.com/dotnet/aspnet:9.0"
+            : "mcr.microsoft.com/dotnet/runtime:9.0";
+
         var sb = new StringBuilder();
         sb.AppendLine("FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build");
-        sb.AppendLine($"WORKDIR /src");
-        sb.AppendLine($"COPY *.sln .");
-        sb.AppendLine($"COPY src/{config.SolutionName}.Api/{config.SolutionName}.Api.csproj ./");
+        sb.AppendLine("WORKDIR /src");
+        sb.AppendLine("COPY *.sln .");
+        sb.AppendLine($"COPY src/{projectName}/{projectName}.csproj ./src/{projectName}/");
         sb.AppendLine("RUN dotnet restore");
-        sb.AppendLine($"COPY . .");
-        sb.AppendLine($"RUN dotnet build -c Release -o /app/build");
+        sb.AppendLine("COPY . .");
+        sb.AppendLine("RUN dotnet build -c Release -o /app/build");
         sb.AppendLine();
         sb.AppendLine("FROM build AS publish");
-        sb.AppendLine($"RUN dotnet publish -c Release -o /app/publish");
+        sb.AppendLine("RUN dotnet publish -c Release -o /app/publish");
         sb.AppendLine();
-        sb.AppendLine("FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final");
+        sb.AppendLine($"FROM {baseImage} AS final");
         sb.AppendLine("WORKDIR /app");
         sb.AppendLine("COPY --from=publish /app/publish .");
-        sb.AppendLine("EXPOSE 8080");
-        sb.AppendLine("ENTRYPOINT [\"dotnet\", \"MySolution.Api.dll\"]");
+        if (config.ProjectType == ProjectType.WebApi)
+            sb.AppendLine("EXPOSE 8080");
+        sb.AppendLine($"ENTRYPOINT [\"dotnet\", \"{projectName}.dll\"]");
         
         File.WriteAllText(Path.Combine(path, "Dockerfile"), sb.ToString());
     }
@@ -415,7 +428,14 @@ Thumbs.db
 
     private void GenerateAppsettings(string srcPath, ProjectConfig config)
     {
-        var apiPath = Path.Combine(srcPath, $"{config.SolutionName}.Api");
+        var projectSuffix = config.ProjectType switch
+        {
+            ProjectType.WebApi => "Api",
+            ProjectType.Worker => "Worker",
+            ProjectType.Console => "Console",
+            _ => "Api"
+        };
+        var projectPath = Path.Combine(srcPath, $"{config.SolutionName}.{projectSuffix}");
         
         var sb = new StringBuilder();
         sb.AppendLine("{");
@@ -438,12 +458,20 @@ Thumbs.db
         
         sb.AppendLine("}");
         
-        File.WriteAllText(Path.Combine(apiPath, "appsettings.json"), sb.ToString());
+        File.WriteAllText(Path.Combine(projectPath, "appsettings.json"), sb.ToString());
     }
 
-    private void GenerateLaunchSettings(string srcPath)
+    private void GenerateLaunchSettings(string srcPath, ProjectConfig config)
     {
-        var propsPath = Path.Combine(srcPath, "Properties");
+        var projectSuffix = config.ProjectType switch
+        {
+            ProjectType.WebApi => "Api",
+            ProjectType.Worker => "Worker",
+            ProjectType.Console => "Console",
+            _ => "Api"
+        };
+        var projectPath = Path.Combine(srcPath, $"{config.SolutionName}.{projectSuffix}");
+        var propsPath = Path.Combine(projectPath, "Properties");
         Directory.CreateDirectory(propsPath);
         
         var content = @"{
@@ -464,7 +492,14 @@ Thumbs.db
 
     private void GenerateSerilogConfig(string srcPath, ProjectConfig config)
     {
-        var apiPath = Path.Combine(srcPath, $"{config.SolutionName}.Api");
+        var projectSuffix = config.ProjectType switch
+        {
+            ProjectType.WebApi => "Api",
+            ProjectType.Worker => "Worker",
+            ProjectType.Console => "Console",
+            _ => "Api"
+        };
+        var projectPath = Path.Combine(srcPath, $"{config.SolutionName}.{projectSuffix}");
         
         var content = $@"using Serilog;
 using Serilog.Events;
@@ -478,6 +513,6 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 ";
         
-        File.WriteAllText(Path.Combine(apiPath, "SerilogConfiguration.cs"), content);
+        File.WriteAllText(Path.Combine(projectPath, "SerilogConfiguration.cs"), content);
     }
 }
