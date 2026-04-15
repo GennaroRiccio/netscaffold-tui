@@ -1,4 +1,5 @@
 using System.Text;
+using Serilog;
 using NetScaffoldTui.Models;
 
 namespace NetScaffoldTui.Services;
@@ -12,6 +13,10 @@ public class ScaffoldingService
             : config.OutputPath;
         
         var solutionPath = Path.Combine(basePath, config.SolutionName);
+
+        Log.Information("Inizio generazione soluzione {SolutionName} in {OutputPath}",
+            config.SolutionName, solutionPath);
+
         Directory.CreateDirectory(solutionPath);
         
         var srcPath = Path.Combine(solutionPath, "src");
@@ -20,32 +25,134 @@ public class ScaffoldingService
         Directory.CreateDirectory(srcPath);
         Directory.CreateDirectory(testsPath);
         
-        var slnContent = GenerateSolutionFile(config.SolutionName);
-        await File.WriteAllTextAsync(Path.Combine(basePath, $"{config.SolutionName}.sln"), slnContent);
+        var slnContent = GenerateSolutionFile(config);
+        await File.WriteAllTextAsync(Path.Combine(solutionPath, $"{config.SolutionName}.sln"), slnContent);
+        Log.Debug("File .sln generato");
         
         GenerateProject(srcPath, testsPath, config);
+        Log.Debug("Progetti generati");
         
-        GenerateBuildProps(basePath, config);
+        GenerateBuildProps(solutionPath, config);
+        Log.Debug("Directory.Build.props generato");
         
         GenerateGitIgnore(solutionPath);
         
         if (config.FeatureToggles["Serilog"])
+        {
             GenerateSerilogConfig(srcPath, config);
+            Log.Debug("Configurazione Serilog generata");
+        }
         
         GenerateDockerfile(solutionPath, config);
+        Log.Debug("Dockerfile generato");
+
         GenerateGitHubWorkflow(solutionPath, config);
+        Log.Debug("GitHub Actions workflow generato");
         
         GenerateAppsettings(srcPath, config);
         GenerateLaunchSettings(srcPath, config);
+
+        Log.Information("Generazione soluzione {SolutionName} completata con successo", config.SolutionName);
     }
 
-    private string GenerateSolutionFile(string solutionName)
+    private string GenerateSolutionFile(ProjectConfig config)
     {
+        // GUID tipo progetto C# e solution folder
+        const string csharpTypeGuid = "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}";
+        const string folderTypeGuid = "{2150E333-8FDC-42A3-9474-1A3956D46DE8}";
+
+        var srcFolderGuid = $"{{{Guid.NewGuid().ToString().ToUpper()}}}";
+        var testsFolderGuid = $"{{{Guid.NewGuid().ToString().ToUpper()}}}";
+
+        // Costruisci la lista dei progetti src
+        var srcProjects = new List<(string name, string guid)>
+        {
+            ($"{config.SolutionName}.Domain", $"{{{Guid.NewGuid().ToString().ToUpper()}}}"),
+            ($"{config.SolutionName}.Application", $"{{{Guid.NewGuid().ToString().ToUpper()}}}"),
+            ($"{config.SolutionName}.Infrastructure", $"{{{Guid.NewGuid().ToString().ToUpper()}}}")
+        };
+
+        var entrySuffix = config.ProjectType switch
+        {
+            ProjectType.WebApi => "Api",
+            ProjectType.Worker => "Worker",
+            ProjectType.Console => "Console",
+            _ => "Api"
+        };
+        srcProjects.Add(($"{config.SolutionName}.{entrySuffix}", $"{{{Guid.NewGuid().ToString().ToUpper()}}}"));
+
+        // Progetti test
+        var testProjects = new List<(string name, string guid)>
+        {
+            ($"{config.SolutionName}.Domain.Tests", $"{{{Guid.NewGuid().ToString().ToUpper()}}}"),
+            ($"{config.SolutionName}.Application.Tests", $"{{{Guid.NewGuid().ToString().ToUpper()}}}")
+        };
+
         var sb = new StringBuilder();
+
+        // Header
+        sb.AppendLine();
         sb.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
         sb.AppendLine("# Visual Studio Version 17");
         sb.AppendLine("VisualStudioVersion = 17.0.31903.59");
         sb.AppendLine("MinimumVisualStudioVersion = 10.0.40219.1");
+
+        // Solution folder: src
+        sb.AppendLine($"Project(\"{folderTypeGuid}\") = \"src\", \"src\", \"{srcFolderGuid}\"");
+        sb.AppendLine("EndProject");
+
+        // Solution folder: tests
+        sb.AppendLine($"Project(\"{folderTypeGuid}\") = \"tests\", \"tests\", \"{testsFolderGuid}\"");
+        sb.AppendLine("EndProject");
+
+        // Progetti src
+        foreach (var (name, guid) in srcProjects)
+        {
+            sb.AppendLine($"Project(\"{csharpTypeGuid}\") = \"{name}\", \"src/{name}/{name}.csproj\", \"{guid}\"");
+            sb.AppendLine("EndProject");
+        }
+
+        // Progetti test
+        foreach (var (name, guid) in testProjects)
+        {
+            sb.AppendLine($"Project(\"{csharpTypeGuid}\") = \"{name}\", \"tests/{name}/{name}.csproj\", \"{guid}\"");
+            sb.AppendLine("EndProject");
+        }
+
+        // Global
+        sb.AppendLine("Global");
+
+        // SolutionConfigurationPlatforms
+        sb.AppendLine("\tGlobalSection(SolutionConfigurationPlatforms) = preSolution");
+        sb.AppendLine("\t\tDebug|Any CPU = Debug|Any CPU");
+        sb.AppendLine("\t\tRelease|Any CPU = Release|Any CPU");
+        sb.AppendLine("\tEndGlobalSection");
+
+        // ProjectConfigurationPlatforms
+        sb.AppendLine("\tGlobalSection(ProjectConfigurationPlatforms) = postSolution");
+        foreach (var (_, guid) in srcProjects.Concat(testProjects))
+        {
+            sb.AppendLine($"\t\t{guid}.Debug|Any CPU.ActiveCfg = Debug|Any CPU");
+            sb.AppendLine($"\t\t{guid}.Debug|Any CPU.Build.0 = Debug|Any CPU");
+            sb.AppendLine($"\t\t{guid}.Release|Any CPU.ActiveCfg = Release|Any CPU");
+            sb.AppendLine($"\t\t{guid}.Release|Any CPU.Build.0 = Release|Any CPU");
+        }
+        sb.AppendLine("\tEndGlobalSection");
+
+        // NestedProjects — mette src projects sotto src folder, test projects sotto tests folder
+        sb.AppendLine("\tGlobalSection(NestedProjects) = preSolution");
+        foreach (var (_, guid) in srcProjects)
+        {
+            sb.AppendLine($"\t\t{guid} = {srcFolderGuid}");
+        }
+        foreach (var (_, guid) in testProjects)
+        {
+            sb.AppendLine($"\t\t{guid} = {testsFolderGuid}");
+        }
+        sb.AppendLine("\tEndGlobalSection");
+
+        sb.AppendLine("EndGlobal");
+
         return sb.ToString();
     }
 

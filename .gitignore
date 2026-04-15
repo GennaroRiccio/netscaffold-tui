@@ -3,3 +3,4 @@ src/NetScaffoldTui/bin
 src/NetScaffoldTui/obj/Debug
 src/NetScaffoldTui/obj
 .idea
+publish/
